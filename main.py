@@ -9,8 +9,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 # --- Correção para o ImportError ---
-# Adiciona o diretório raiz do projeto ao sys.path
-# Isso permite que os outros módulos (excel_generator, utils, parsers) se encontrem
 project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -31,21 +29,18 @@ def carregar_parsers_fundos():
     Retorna um dicionário com o nome do fundo e o módulo do parser.
     """
     parsers = {}
-    # O caminho para a pasta de parsers agora é absoluto
     parser_dir = os.path.join(project_root, "parsers")
-    # Lista todos os arquivos .py na pasta, ignorando o nosso relatório e arquivos de sistema
+    if not os.path.isdir(parser_dir):
+        return parsers
+
     arquivos_parser = [f for f in os.listdir(parser_dir) if
                        f.endswith('.py') and not f.startswith('_') and 'nosso' not in f]
 
     for arquivo in arquivos_parser:
-        # Tira a extensão .py para obter o nome do módulo
         nome_modulo = arquivo[:-3]
-        # O nome do fundo será o nome do módulo capitalizado
         nome_fundo = nome_modulo.replace("_parser", "").capitalize()
         try:
-            # Importa o módulo dinamicamente
             modulo = importlib.import_module(f"parsers.{nome_modulo}")
-            # Adiciona ao dicionário se o módulo tiver a função 'processar'
             if hasattr(modulo, 'processar'):
                 parsers[nome_fundo] = modulo
         except ImportError as e:
@@ -116,8 +111,11 @@ class ReconciliationApp:
         main_frame.rowconfigure(5, weight=1)
 
     def select_file(self, path_var, title):
-        filepath = filedialog.askopenfilename(parent=self.root, title=title,
-                                              filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        """
+        Abre uma janela para selecionar um arquivo CSV.
+        """
+        filetypes = [("CSV files", "*.csv"), ("All files", "*.*")]
+        filepath = filedialog.askopenfilename(parent=self.root, title=title, filetypes=filetypes)
         if filepath:
             path_var.set(filepath)
             self.check_paths()
@@ -182,12 +180,10 @@ class ReconciliationApp:
             self.thread_queue.put(("progress", (10, "Processando nosso relatório...")))
             df_nosso = nosso_relatorio_parser.processar(self.nosso_path.get())
 
-            # --- Lógica dinâmica para o parser do fundo ---
             nome_fundo_selecionado = self.fundo_selecionado.get()
             parser_modulo = self.parsers[nome_fundo_selecionado]
             self.thread_queue.put(("progress", (30, f"Processando relatório do fundo '{nome_fundo_selecionado}'...")))
             df_fundo = parser_modulo.processar(self.fundo_path.get())
-            # --- Fim da lógica dinâmica ---
 
             self.thread_queue.put(("progress", (50, "Normalizando documentos...")))
             df_nosso['Documento_Norm'] = df_nosso['Documento'].apply(normalizar_documento)
@@ -214,9 +210,8 @@ class ReconciliationApp:
 
             self.thread_queue.put(("progress", (100, "Análise concluída com sucesso!")))
             self.thread_queue.put(("done", None))
-        except PermissionError:
-            self.thread_queue.put(("error",
-                                   f"Não foi possível salvar o arquivo '{os.path.basename(self.output_path)}'.\n\nVerifique se o arquivo não está aberto e tente novamente."))
+        except (PermissionError, ValueError) as e:
+            self.thread_queue.put(("error", f"Erro ao processar arquivo:\n\n{e}"))
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -239,12 +234,9 @@ class ReconciliationApp:
 
 
 if __name__ == "__main__":
-    # Garante que a pasta de parsers existe
     if not os.path.isdir("parsers"):
         os.makedirs("parsers")
-        print("Pasta 'parsers' criada. Adicione os arquivos de parser de cada fundo nela.")
 
-    # Carrega os parsers disponíveis ao iniciar
     available_parsers = carregar_parsers_fundos()
 
     app_root = tk.Tk()
